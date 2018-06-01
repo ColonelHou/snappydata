@@ -265,7 +265,11 @@ final class ColumnFormatIterator(baseRegion: LocalRegion, projection: Array[Int]
                 val statsEntry = map.remove((1L << 32) | (STATROW_COL_INDEX & 0xffffffffL))
                 if (statsEntry eq null) {
                   // missing stats row?
-                  throw new IllegalStateException(s"Missing stats row for batch = $map")
+                  val statsKey = new ColumnFormatKey(uuid,
+                    currentRegion.asInstanceOf[BucketRegion].getId, STATROW_COL_INDEX)
+                  throw new IllegalStateException(s"Missing stats row for batch = $map ; " +
+                      s"lookup result = ${currentRegion.get(statsKey)}, " +
+                      s"on PR = ${distributedRegion.get(statsKey)}")
                 }
                 val diskBatch = new DiskMultiColumnBatch(statsEntry.asInstanceOf[RegionEntry],
                   currentRegion, readerId, new Array[AnyRef](map.size()))
