@@ -488,25 +488,35 @@ class ColumnFormatValue extends SerializedDiskBuffer
         perfStats.endDecompression(startDecompression)
         val newValue = copy(decompressed, isCompressed = false, changeOwnerToStorage = false)
         if (doReplace) {
+          val numBytes = decompressed.capacity() - buffer.capacity()
           if (updateStats && !isDirect) {
             // acquire the increased memory after decompression
-            val numBytes = decompressed.capacity() - buffer.capacity()
             if (!StoreCallbacksImpl.acquireStorageMemory(context.getFullPath,
               numBytes, buffer = null, offHeap = false, shouldEvict = true)) {
               throw LocalRegion.lowMemoryException(null, numBytes)
             }
           }
           val newBuffer = transferToStorage(decompressed, allocator)
-          // update the statistics before changing self
-          if (updateStats) {
-            context.updateMemoryStats(this, newValue)
-          }
-          synchronized {
-            this.columnBuffer = newBuffer
-            this.decompressionState = 1
+          val releaseStorageMemory = synchronized {
+            // check if another thread already replaced the buffer then
+            // no stats changes should be done
+            if ((this.columnBuffer eq buffer) || this.decompressionState <= 0) {
+              // update the statistics before changing self
+              if (updateStats) {
+                context.updateMemoryStats(this, newValue)
+              }
+              this.columnBuffer = newBuffer
+              this.decompressionState = 1
+              perfStats.incDecompressedReplaced()
+              false
+            } else true
           }
           allocator.release(buffer)
-          perfStats.incDecompressedReplaced()
+          // if buffer was not replaced then release storage acquired earlier
+          if (releaseStorageMemory && !isDirect) {
+            StoreCallbacksImpl.releaseStorageMemory(context.getFullPath,
+              numBytes, offHeap = false)
+          }
           this
         } else {
           perfStats.incDecompressedReplaceSkipped()
@@ -569,14 +579,20 @@ class ColumnFormatValue extends SerializedDiskBuffer
                 trimmed.rewind()
                 trimmed
               } else transferToStorage(compressed, allocator)
-              // update the statistics before changing self
-              if (updateStats) {
-                val newValue = copy(newBuffer, isCompressed = true, changeOwnerToStorage = false)
-                context.updateMemoryStats(this, newValue)
-              }
               synchronized {
-                this.columnBuffer = newBuffer
-                this.decompressionState = 0
+                // check if another thread already replaced the buffer then
+                // no stats changes should be done
+                if ((this.columnBuffer eq buffer) || this.decompressionState > 0) {
+                  // update the statistics before changing self
+                  if (updateStats) {
+                    val newVal = copy(newBuffer, isCompressed = true, changeOwnerToStorage = false)
+                    context.updateMemoryStats(this, newVal)
+                  }
+                  this.columnBuffer = newBuffer
+                  this.decompressionState = 0
+                } else {
+                  updateStats = false
+                }
               }
               allocator.release(buffer)
               // release storage memory for the buffer being transferred to storage
