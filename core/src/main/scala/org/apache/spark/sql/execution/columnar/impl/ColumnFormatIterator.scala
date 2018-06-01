@@ -263,18 +263,8 @@ final class ColumnFormatIterator(baseRegion: LocalRegion, projection: Array[Int]
               // check if map has overflowed entries
               if (map.getGlobalState eq None) {
                 val statsEntry = map.remove((1L << 32) | (STATROW_COL_INDEX & 0xffffffffL))
-                if (statsEntry eq null) {
-                  // missing stats row?
-                  val statsKey = new ColumnFormatKey(uuid,
-                    currentRegion.asInstanceOf[BucketRegion].getId, STATROW_COL_INDEX)
-                  throw new IllegalStateException(s"Missing stats row for batch = $map ; " +
-                      s"lookup result = ${currentRegion.get(statsKey)}, " +
-                      s"on PR = ${distributedRegion.get(statsKey)} " +
-                      s"no-TX lookup = ${currentRegion.get(statsKey, null, false, true, false,
-                        null, null, null, null, false, false)} " +
-                      s"no-TX PR lookup = ${distributedRegion.get(statsKey, null, false, true,
-                        false, null, null, null, null, false, false)}")
-                }
+                // skip if stats row for the batch is missing from snapshot iterator
+                if (statsEntry eq null) return true
                 val diskBatch = new DiskMultiColumnBatch(statsEntry.asInstanceOf[RegionEntry],
                   currentRegion, readerId, new Array[AnyRef](map.size()))
                 // collect all the overflowed entries and push those into diskBatch
