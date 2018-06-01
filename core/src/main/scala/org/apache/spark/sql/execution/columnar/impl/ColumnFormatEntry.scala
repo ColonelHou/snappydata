@@ -265,7 +265,7 @@ class ColumnFormatValue extends SerializedDiskBuffer
   @transient protected var columnBuffer = DiskEntry.Helper.NULL_BUFFER
 
   @volatile
-  @transient protected var compressionCodecId: Byte = Constant.DEFAULT_CODECID.id.toByte
+  @transient protected[columnar] var compressionCodecId: Byte = Constant.DEFAULT_CODECID.id.toByte
   /**
    * This keeps track of whether the buffer is compressed or not.
    * In addition it keeps a count of how many times compression was done on
