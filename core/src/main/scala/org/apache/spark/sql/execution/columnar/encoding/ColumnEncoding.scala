@@ -894,17 +894,8 @@ object ColumnEncoding {
       s"BooleanBitSetEncoder not supported for $dataType")
   }
 
-  @inline final def SW_checkBytes(columnBytes: AnyRef, cursor: Long): Unit = {
-    if (columnBytes.isInstanceOf[Array[Byte]]) {
-      val b = columnBytes.asInstanceOf[Array[Byte]]
-      assert(cursor >= Platform.BYTE_ARRAY_OFFSET &&
-          cursor - Platform.BYTE_ARRAY_OFFSET <= b.length)
-    }
-  }
-
   @inline final def readShort(columnBytes: AnyRef,
       cursor: Long): Short = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 2)
     Platform.getShort(columnBytes, cursor)
   } else {
     java.lang.Short.reverseBytes(Platform.getShort(columnBytes, cursor))
@@ -912,7 +903,6 @@ object ColumnEncoding {
 
   @inline final def readInt(columnBytes: AnyRef,
       cursor: Long): Int = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 4)
     Platform.getInt(columnBytes, cursor)
   } else {
     java.lang.Integer.reverseBytes(Platform.getInt(columnBytes, cursor))
@@ -920,7 +910,6 @@ object ColumnEncoding {
 
   @inline final def readLong(columnBytes: AnyRef,
       cursor: Long): Long = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 8)
     Platform.getLong(columnBytes, cursor)
   } else {
     java.lang.Long.reverseBytes(Platform.getLong(columnBytes, cursor))
@@ -939,7 +928,6 @@ object ColumnEncoding {
 
   @inline final def readFloat(columnBytes: AnyRef,
       cursor: Long): Float = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 4)
     Platform.getFloat(columnBytes, cursor)
   } else {
     java.lang.Float.intBitsToFloat(java.lang.Integer.reverseBytes(
@@ -948,7 +936,6 @@ object ColumnEncoding {
 
   @inline final def readDouble(columnBytes: AnyRef,
       cursor: Long): Double = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 8)
     Platform.getDouble(columnBytes, cursor)
   } else {
     java.lang.Double.longBitsToDouble(java.lang.Long.reverseBytes(
@@ -958,7 +945,6 @@ object ColumnEncoding {
   @inline final def readUTF8String(columnBytes: AnyRef,
       cursor: Long): UTF8String = {
     val size = readInt(columnBytes, cursor)
-    SW_checkBytes(columnBytes, cursor + 4 + size)
     UTF8String.fromAddress(columnBytes, cursor + 4, size)
   }
 
@@ -967,7 +953,6 @@ object ColumnEncoding {
 
   @inline final def writeShort(columnBytes: AnyRef,
       cursor: Long, value: Short): Unit = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 2)
     Platform.putShort(columnBytes, cursor, value)
   } else {
     Platform.putShort(columnBytes, cursor, java.lang.Short.reverseBytes(value))
@@ -975,7 +960,6 @@ object ColumnEncoding {
 
   @inline final def writeInt(columnBytes: AnyRef,
       cursor: Long, value: Int): Unit = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 4)
     Platform.putInt(columnBytes, cursor, value)
   } else {
     Platform.putInt(columnBytes, cursor, java.lang.Integer.reverseBytes(value))
@@ -983,7 +967,6 @@ object ColumnEncoding {
 
   @inline final def writeLong(columnBytes: AnyRef,
       cursor: Long, value: Long): Unit = if (littleEndian) {
-    SW_checkBytes(columnBytes, cursor + 8)
     Platform.putLong(columnBytes, cursor, value)
   } else {
     Platform.putLong(columnBytes, cursor, java.lang.Long.reverseBytes(value))
@@ -991,9 +974,8 @@ object ColumnEncoding {
 
   final def writeUTF8String(columnBytes: AnyRef,
       cursor: Long, base: AnyRef, offset: Long, size: Int): Long = {
-    writeInt(columnBytes, cursor, size)
+    ColumnEncoding.writeInt(columnBytes, cursor, size)
     val position = cursor + 4
-    SW_checkBytes(columnBytes, position + size)
     Platform.copyMemory(base, offset, columnBytes, position, size)
     position + size
   }

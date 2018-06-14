@@ -149,9 +149,9 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
         val id = memMap.get("id").toString
 
         var memberStats: MemberStatistics = {
-          if(dssUUID != null && membersInfo.contains(dssUUID.toString)) {
+          if (dssUUID != null && membersInfo.contains(dssUUID.toString)) {
             membersInfo(dssUUID.toString)
-          } else if(membersInfo.contains(id)) {
+          } else if (membersInfo.contains(id)) {
             membersInfo(id)
           } else {
             null
@@ -312,7 +312,7 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
           stats.setPRNumRowsInColumnBatches(rowsInColumnBatch)
           stats.setOffHeapSizeInBytes(offHeapSize)
         } else if (container.isRowBuffer && pr.getLocalMaxMemory > 0) {
-          // rolloverTasks.computeIfAbsent(pr, rolloverRowBuffersTask)
+          rolloverTasks.computeIfAbsent(pr, rolloverRowBuffersTask)
         }
       }
     }
