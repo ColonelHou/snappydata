@@ -17,13 +17,14 @@
 
 package io.snappydata
 
-import java.util.concurrent.{CyclicBarrier, Executors}
+import java.util.concurrent.{CyclicBarrier, Executors, TimeUnit}
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
 
 import com.gemstone.gemfire.internal.cache.{GemFireCacheImpl, PartitionedRegion}
+import com.pivotal.gemfirexd.TestUtil
 import com.pivotal.gemfirexd.internal.engine.Misc
 import com.pivotal.gemfirexd.internal.engine.store.GemFireContainer
 import io.snappydata.SnappyFunSuite.checkAnswer
@@ -442,6 +443,12 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
   }
 
   def testConcurrentOps(session: SnappySession): Unit = {
+    // start network server
+    val serverHostPort = TestUtil.startNetServer()
+    // scalastyle:off println
+    println(s"Started network server on $serverHostPort")
+    // scalastyle:on println
+
     // reduced size to ensure both column table and row buffer have data
     session.conf.set(Property.ColumnBatchSize.name, "10k")
     // session.conf.set(Property.ColumnMaxDeltaRows.name, "200")
@@ -474,7 +481,7 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
     DistributedTestBase.invokeInEveryVM(avoidRollover)
     avoidRollover.run()
 
-    for (_ <- 1 to 3) {
+    for (_ <- 1 to 100) {
       testConcurrentOpsIter(session)
 
       session.sql("truncate table updateTable")
@@ -512,8 +519,8 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
         .write.insertInto("checkTable2")
 
     val exceptions = new TrieMap[Thread, Throwable]
-    val executionContext = ExecutionContext.fromExecutorService(
-      Executors.newFixedThreadPool(concurrency + 2))
+    val executorService = Executors.newFixedThreadPool(concurrency + 2)
+    val executionContext = ExecutionContext.fromExecutorService(executorService)
 
     // concurrent updates to different rows but same batches
     val barrier = new CyclicBarrier(concurrency)
@@ -543,6 +550,12 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
 
     var res = session.sql(
       "select * from updateTable EXCEPT select * from checkTable1").collect()
+    if (res.length != 0) {
+      // scalastyle:off println
+      println("Failed in updates?")
+      // scalastyle:on println
+      Thread.sleep(1000000)
+    }
     assert(res.length === 0)
 
     // concurrent deletes
@@ -560,6 +573,7 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
         case t: Throwable =>
           logError(t.getMessage, t)
           exceptions += Thread.currentThread() -> t
+          barrier.await()
           throw t
       }
     }(executionContext))
@@ -569,7 +583,18 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
 
     res = session.sql(
       "select * from updateTable EXCEPT select * from checkTable2").collect()
+    if (res.length != 0) {
+      // scalastyle:off println
+      println("Failed in deletes?")
+      // scalastyle:on println
+      Thread.sleep(1000000)
+    }
     assert(res.length === 0)
+
+    executorService.shutdown()
+    if (!executorService.awaitTermination(1, TimeUnit.SECONDS)) {
+      executorService.shutdownNow()
+    }
   }
 
   def testSNAP2124(session: SnappySession, checkPruning: Boolean): Unit = {
