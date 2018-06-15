@@ -560,12 +560,14 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
 
     // concurrent deletes
     tasks = Array.tabulate(concurrency)(i => Future {
+      var awaitDone = false
       try {
         val snappy = new SnappySession(session.sparkContext)
         var res = snappy.sql("select count(*) from updateTable").collect()
         assert(res(0).getLong(0) === numElements)
 
         barrier.await()
+        awaitDone = true
         res = snappy.sql(
           s"delete from updateTable where (id % $step) = ${step - i - 1}").collect()
         assert(res.map(_.getLong(0)).sum > 0)
@@ -573,7 +575,7 @@ object ColumnUpdateDeleteTests extends Assertions with Logging {
         case t: Throwable =>
           logError(t.getMessage, t)
           exceptions += Thread.currentThread() -> t
-          barrier.await()
+          if (!awaitDone) barrier.await()
           throw t
       }
     }(executionContext))

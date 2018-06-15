@@ -843,7 +843,7 @@ object ColumnTableScan extends Logging {
       val allStats = schemaAttrs.map(a => a ->
           // nullCount as nullable works for both full stats and delta stats
           // though former will never be null (latter can be for non-updated columns)
-          ColumnStatsSchema(a.name, a.dataType, nullCountNullable = true))
+          ColumnStatsSchema(a.name, a.dataType, nullCountNullable = false))
       (AttributeMap(allStats),
           ColumnStatsSchema.COUNT_ATTRIBUTE +: allStats.flatMap(_._2.schema))
     } else (null, Nil)
