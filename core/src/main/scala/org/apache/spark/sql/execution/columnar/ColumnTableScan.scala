@@ -850,6 +850,9 @@ object ColumnTableScan extends Logging {
 
     def statsFor(a: Attribute) = columnBatchStatsMap(a)
 
+    def filterInList(l: Seq[Expression]): Boolean =
+      l.length <= 200 && !l.exists(!TokenLiteral.isConstant(_))
+
     // Returned filter predicate should return false iff it is impossible
     // for the input expression to evaluate to `true' based on statistics
     // collected about this partition batch.
@@ -869,9 +872,9 @@ object ColumnTableScan extends Logging {
       case EqualTo(l, a: AttributeReference) if TokenLiteral.isConstant(l) =>
         statsFor(a).lowerBound <= l && l <= statsFor(a).upperBound
 
-      case In(a: AttributeReference, l) if !l.exists(!TokenLiteral.isConstant(_)) =>
+      case In(a: AttributeReference, l) if filterInList(l) =>
         statsFor(a).lowerBound <= Greatest(l) && statsFor(a).upperBound >= Least(l)
-      case DynamicInSet(a: AttributeReference, l) if !l.exists(!TokenLiteral.isConstant(_)) =>
+      case DynamicInSet(a: AttributeReference, l) if filterInList(l) =>
         statsFor(a).lowerBound <= Greatest(l) && statsFor(a).upperBound >= Least(l)
 
       case LessThan(a: AttributeReference, l) if TokenLiteral.isConstant(l) =>
