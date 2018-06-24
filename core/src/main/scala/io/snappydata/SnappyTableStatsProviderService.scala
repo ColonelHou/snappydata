@@ -276,7 +276,7 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
             // progress can be monitored on dashboard. However, the pre-created transaction
             // is used to check for committed entries in case there are multiple column
             // batches that need to be merged
-            val itr = new pr.PRLocalScanIterator(true /* primaryOnly */ , null /* no TX */ ,
+            val itr = new pr.PRLocalScanIterator(false /* primaryOnly */ , null /* no TX */ ,
               null /* not required since includeValues is false */ ,
               createRemoteIterator, false /* forUpdate */ , false /* includeValues */)
             val maxDeltaRows = pr.getColumnMaxDeltaRows
@@ -287,14 +287,21 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
               val re = itr.next().asInstanceOf[RegionEntry]
               if (!re.isDestroyedOrRemoved) {
                 val key = re.getRawKey.asInstanceOf[ColumnFormatKey]
-                val batchRowCount = key.getColumnBatchRowCount(itr, re, numColumnsInTable)
-                rowsInColumnBatch += batchRowCount
-                // check if bucket has multiple small batches
-                if (key.getColumnIndex == ColumnFormatEntry.STATROW_COL_INDEX &&
-                    batchRowCount < maxDeltaRows) {
-                  val br = itr.getHostedBucketRegion
-                  if (br eq smallBucketRegion) smallBatchBuckets.add(br)
-                  else smallBucketRegion = br
+                val bucketRegion = itr.getHostedBucketRegion
+                if (bucketRegion.getBucketAdvisor.isPrimary) {
+                  if (numColumnsInTable < 0) {
+                    numColumnsInTable = key.getNumColumnsInTable(table)
+                  }
+                  val batchRowCount = key.getColumnBatchRowCount(bucketRegion, re,
+                      numColumnsInTable)
+                  rowsInColumnBatch += batchRowCount
+                  // check if bucket has multiple small batches
+                  if (key.getColumnIndex == ColumnFormatEntry.STATROW_COL_INDEX &&
+                      batchRowCount < maxDeltaRows) {
+                    val br = itr.getHostedBucketRegion
+                    if (br eq smallBucketRegion) smallBatchBuckets.add(br)
+                    else smallBucketRegion = br
+                  }
                 }
                 re._getValue() match {
                   case v: ColumnFormatValue => offHeapSize += v.getOffHeapSizeInBytes
