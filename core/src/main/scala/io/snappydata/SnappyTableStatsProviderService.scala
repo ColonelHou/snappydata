@@ -30,14 +30,15 @@ import scala.language.implicitConversions
 import scala.util.control.NonFatal
 
 import com.gemstone.gemfire.CancelException
-import com.gemstone.gemfire.cache.IsolationLevel
 import com.gemstone.gemfire.cache.execute.FunctionService
+import com.gemstone.gemfire.cache.{IsolationLevel, LockTimeoutException}
 import com.gemstone.gemfire.i18n.LogWriterI18n
 import com.gemstone.gemfire.internal.SystemTimer
 import com.gemstone.gemfire.internal.cache._
 import com.pivotal.gemfirexd.internal.engine.Misc
 import com.pivotal.gemfirexd.internal.engine.distributed.GfxdListResultCollector.ListResultCollectorValue
 import com.pivotal.gemfirexd.internal.engine.distributed.{GfxdListResultCollector, GfxdMessage}
+import com.pivotal.gemfirexd.internal.engine.locks.GfxdLockSet
 import com.pivotal.gemfirexd.internal.engine.sql.execute.MemberStatisticsMessage
 import com.pivotal.gemfirexd.internal.engine.store.GemFireContainer
 import com.pivotal.gemfirexd.internal.engine.ui._
@@ -322,18 +323,14 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
                 val key = re.getRawKey.asInstanceOf[ColumnFormatKey]
                 val bucketRegion = itr.getHostedBucketRegion
                 if (bucketRegion.getBucketAdvisor.isPrimary) {
-                  if (numColumnsInTable < 0) {
-                    numColumnsInTable = key.getNumColumnsInTable(table)
-                  }
                   val batchRowCount = key.getColumnBatchRowCount(bucketRegion, re,
                       numColumnsInTable)
                   rowsInColumnBatch += batchRowCount
                   // check if bucket has multiple small batches
                   if (key.getColumnIndex == ColumnFormatEntry.STATROW_COL_INDEX &&
                       batchRowCount < maxDeltaRows) {
-                    val br = itr.getHostedBucketRegion
-                    if (br eq smallBucketRegion) smallBatchBuckets.add(br)
-                    else smallBucketRegion = br
+                    if (bucketRegion eq smallBucketRegion) smallBatchBuckets.add(bucketRegion)
+                    else smallBucketRegion = bucketRegion
                   }
                 }
                 re._getValue() match {
@@ -345,7 +342,7 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
             itr.close()
             // submit a task to merge small batches if required
             if (smallBatchBuckets.size() > 0) {
-              // mergeSmallColumnBatches(pr, container, columnMeta, smallBatchBuckets.asScala)
+              mergeSmallColumnBatches(pr, container, columnMeta, smallBatchBuckets.asScala)
             }
           }
           val stats = pr.getPrStats
@@ -403,7 +400,7 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
           Future {
             var locked = false
             try {
-              locked = pr.lockForMaintenance(true, 10)
+              locked = pr.lockForMaintenance(true, GfxdLockSet.MAX_LOCKWAIT_VAL)
               if (locked) {
                 val doRollover = new Predicate[BucketRegion] {
                   override def test(br: BucketRegion): Boolean =
@@ -438,6 +435,14 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
         val rowBufferRegion = Misc.getRegionForTable(rowBuffer, true)
             .asInstanceOf[PartitionedRegion]
         var locked = false
+
+        def releaseMaintenanceLock(): Unit = {
+          if (locked) {
+            rowBufferRegion.unlockForMaintenance(true)
+            locked = false
+          }
+        }
+
         implicit val executionContext = Utils.executionContext(cache)
         Future(Utils.withExceptionHandling({
           val tableName = container.getQualifiedTableName
@@ -474,19 +479,25 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
           var success = false
           var tx: TXStateProxy = null
           var context: TXManagerImpl.TXContext = null
-          // lock the row buffer region for maintenance
-          locked = rowBufferRegion.lockForMaintenance(true, 10)
-          logInfo(s"Found small batches in ${pr.getName} (locked=$locked): " +
+          logInfo(s"Found small batches in ${pr.getName}: " +
               smallBatchBuckets.map(_.getId).mkString(", "))
           // for each bucket, create an iterator to scan and insert the result batches;
           // a separate iterator is required because one ColumnInsertExec assumes a single batchId
-          if (locked) for (br <- smallBatchBuckets) try {
+          for (br <- smallBatchBuckets) try {
             success = false
-            // start a new transaction for each bucket
             tx = null
+            // lock the row buffer region for maintenance operations
+            Thread.`yield`() // prefer any other foreground operations
+            locked = rowBufferRegion.lockForMaintenance(true, GfxdLockSet.MAX_LOCKWAIT_VAL)
+            if (!locked) {
+              throw new LockTimeoutException(
+                s"Failed to lock ${rowBufferRegion.getFullPath} for maintenance merge operation")
+            }
+            // start a new transaction for each bucket
             tx = if (cache.snapshotEnabled) {
               context = TXManagerImpl.getOrCreateTXContext()
-              cache.getCacheTransactionManager.beginTX(context, IsolationLevel.SNAPSHOT, null, null)
+              cache.getCacheTransactionManager.beginTX(context,
+                IsolationLevel.SNAPSHOT, null, null)
             } else null
             // find the committed entries with small batches under the transaction
             val bucketId = br.getId
@@ -498,7 +509,8 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
               val re = itr.next().asInstanceOf[RegionEntry]
               if (!re.isDestroyedOrRemoved) {
                 val key = re.getRawKey.asInstanceOf[ColumnFormatKey]
-                val batchRowCount = key.getColumnBatchRowCount(itr, re, schema.length)
+                val batchRowCount = key.getColumnBatchRowCount(itr.getHostedBucketRegion,
+                  re, schema.length)
                 // check if bucket has multiple small batches
                 if (key.getColumnIndex == ColumnFormatEntry.STATROW_COL_INDEX &&
                     batchRowCount < maxDeltaRows) {
@@ -529,13 +541,15 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
             }
             success = true
           } catch {
+            case le: LockTimeoutException => logWarning(le.getMessage)
             case t: Throwable => Utils.logAndThrowException(t)
           } finally {
             handleTransaction(cache, tx, context, success)
+            releaseMaintenanceLock()
           }
         }, () => {
           mergeTasks.remove(pr)
-          if (locked) rowBufferRegion.unlockForMaintenance(true)
+          releaseMaintenanceLock()
         }))
       }
     })

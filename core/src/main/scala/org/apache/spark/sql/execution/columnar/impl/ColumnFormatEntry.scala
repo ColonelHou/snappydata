@@ -26,7 +26,6 @@ import com.gemstone.gemfire.cache.{DiskAccessException, EntryDestroyedException,
 import com.gemstone.gemfire.internal.DSFIDFactory.GfxdDSFID
 import com.gemstone.gemfire.internal.cache._
 import com.gemstone.gemfire.internal.cache.lru.Sizeable
-import com.gemstone.gemfire.internal.cache.partitioned.PREntriesIterator
 import com.gemstone.gemfire.internal.cache.persistence.DiskRegionView
 import com.gemstone.gemfire.internal.cache.store.SerializedDiskBuffer
 import com.gemstone.gemfire.internal.shared._
@@ -118,7 +117,7 @@ final class ColumnFormatKey(private[columnar] var uuid: Long,
 
   override def getColumnBatchRowCount(bucketRegion: BucketRegion,
       re: RegionEntry, numColumnsInTable: Int): Int = {
-    if ((columnIndex == ColumnFormatEntry.STATROW_COL_INDEX ||
+    if (columnIndex == ColumnFormatEntry.STATROW_COL_INDEX ||
         columnIndex == ColumnFormatEntry.DELTA_STATROW_COL_INDEX ||
         columnIndex == ColumnFormatEntry.DELETE_MASK_COL_INDEX) {
       val statsOrDeleteVal = re.getValue(bucketRegion)
